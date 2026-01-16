@@ -92,7 +92,7 @@ pipeline {
 
                     # update values.yaml using yq
                     # add deploy tag
-                    yq e ".image.tag = \\"$IMAGE_TAG\\"" -i k8s-demo-petclinic/values.yaml
+                    yq e ".image.version = \\"$IMAGE_TAG\\"" -i k8s-demo-petclinic/values.yaml
 
                     # commit & push changes
                     git config user.email "jenkins@ci.local"
