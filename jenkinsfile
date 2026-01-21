@@ -8,7 +8,7 @@ pipeline {
         SONAR_PROJECT_NAME = "petclinic"
         SONAR_HOST_URL = "http://host.docker.internal:9000"
         SONAR_TOKEN = "sqa_0b084fd1e9934054da2ec56ef4c649453941e1b1"
-        REGISTRY_URL = "172.18.96.1:8082"
+        REGISTRY_URL = "host.docker.internal:8082"
         REGISTRY_CREDENTIALS = "nexus-docker-creds"
         IMAGE_NAME = "petclinic"
         GIT_USER = "carlosdiandy"
