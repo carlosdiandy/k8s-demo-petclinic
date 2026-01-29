@@ -1,0 +1,176 @@
+pipeline {
+    agent {
+        label 'agent1'
+    }
+
+    environment {
+        SONAR_PROJECT_KEY = "petclinic"
+        SONAR_PROJECT_NAME = "petclinic"
+        SONAR_HOST_URL = "http://host.docker.internal:9000"
+        SONAR_TOKEN = "sqa_0b084fd1e9934054da2ec56ef4c649453941e1b1"
+        REGISTRY_URL = "host.docker.internal:8082"
+        REGISTRY_CREDENTIALS = "nexus-docker-creds"
+        IMAGE_NAME = "petclinic"
+        GIT_USER = "carlosdiandy"
+    }
+
+    stages {
+
+        stage('Build JAR') {
+            when {
+                branch 'dev'
+            }
+            steps {
+                sh "mvn clean package -DskipTests"
+            }
+        }
+
+        stage('Push JAR to Nexus') {
+            when {
+                branch 'dev'
+            }
+            steps {
+                configFileProvider([configFile(fileId: '80c3f60e-8c3f-446a-b9f9-1137f7835214', variable: 'MAVEN_SETTINGS')]) {
+                   sh 'mvn deploy  -Dmaven.test.skip=true --settings $MAVEN_SETTINGS'
+                }
+            }
+        }
+
+        stage('Push SonarReport') {
+            when {
+                branch 'dev'
+            }
+            steps {
+                configFileProvider([configFile(fileId: '80c3f60e-8c3f-446a-b9f9-1137f7835214', variable: 'MAVEN_SETTINGS')]) {
+                    sh '''
+                        mvn clean verify org.sonarsource.scanner.maven:sonar-maven-plugin:4.0.0.4121:sonar \
+                          -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                          -Dsonar.projectName=${SONAR_PROJECT_NAME} \
+                          -Dsonar.host.url=${SONAR_HOST_URL}  \
+                          -Dsonar.token=${SONAR_TOKEN} \
+                          -DskipTests \
+                          --settings $MAVEN_SETTINGS
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            when {
+                branch 'dev'
+            }
+            steps {
+                script {
+                    sh '''
+                        IMAGE_TAG=$(echo "$GIT_COMMIT" | cut -c1-7)
+                        docker build -t ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker tag ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY_URL}/${IMAGE_NAME}:latest
+                    '''
+                }
+            }
+        }
+
+        stage('Push Docker image to Nexus') {
+            when {
+                branch 'dev'
+            }
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: "${REGISTRY_CREDENTIALS}", usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+                        sh '''
+                            IMAGE_TAG=$(echo "$GIT_COMMIT" | cut -c1-7)
+                            echo "$PASS" | docker login http://${REGISTRY_URL} -u "$USER" --password-stdin
+                            docker push ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}
+                            docker push ${REGISTRY_URL}/${IMAGE_NAME}:latest
+                            docker logout ${REGISTRY_URL}
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage ('Deploy dev') {
+            when {
+                branch 'dev'
+            }
+            steps {
+                withCredentials([string(credentialsId: 'github', variable: 'GIT_TOKEN')]) {
+                    sh '''
+                    #!/bin/bash
+                    set -e
+
+                    # get short commit hash
+                    IMAGE_TAG=$(echo "$GIT_COMMIT" | cut -c1-7)
+
+                    # prepare gitops repo
+                    rm -rf gitops
+                    git clone https://$GIT_TOKEN@github.com/$GIT_USER/devops.git gitops
+                    cd gitops
+
+                    # update dev-values.yaml using yq
+                    # add deploy tag
+                    yq e ".image.version = \\"$IMAGE_TAG\\"" -i k8s-demo-petclinic/values.yaml
+                    yq e ".image.version = \\"$IMAGE_TAG\\"" -i k8s-demo-petclinic/env/dev-values.yaml
+
+                    # commit & push changes
+                    git config user.email "jenkins@ci.local"
+                    git config user.name "jenkins"
+                    if ! git diff --quiet; then
+                        git commit -am "Deploy petclinic image $IMAGE_TAG"
+                        git push
+                    else
+                        echo "No changes to commit"
+                    fi
+                    '''
+                }
+
+            }
+        }
+
+        stage ('Deploy staging') {
+            when {
+                branch 'staging'
+            }
+            steps {
+                withCredentials([string(credentialsId: 'github', variable: 'GIT_TOKEN')]) {
+                    sh '''
+                    #!/bin/bash
+                    set -e
+
+                    # prepare gitops repo
+                    rm -rf gitops
+                    git clone https://$GIT_TOKEN@github.com/$GIT_USER/devops.git gitops
+                    cd gitops
+
+                    # get image tag from values.yaml
+                    IMAGE_TAG=$(yq e ".image.version = \\"$IMAGE_TAG\\"" k8s-demo-petclinic/values.yaml)
+
+                    # update staging-values.yaml using yq
+                    # add deploy tag
+                    yq e ".image.version = \\"$IMAGE_TAG\\"" -i k8s-demo-petclinic/env/staging-values.yaml
+
+                    # commit & push changes
+                    git config user.email "jenkins@ci.local"
+                    git config user.name "jenkins"
+                    if ! git diff --quiet; then
+                        git commit -am "Deploy petclinic staging image $IMAGE_TAG"
+                        git push
+                    else
+                        echo "No changes to commit"
+                    fi
+                    '''
+                }
+
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "SUCCES DU BUILD"
+        }
+        failure {
+            echo "ECHEC DU BUILD"
+        }
+    }
+}
