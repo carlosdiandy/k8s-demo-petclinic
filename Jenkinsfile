@@ -143,7 +143,7 @@ pipeline {
                     cd gitops
 
                     # get image tag from values.yaml
-                    IMAGE_TAG=$(yq e ".image.version = \\"$IMAGE_TAG\\"" k8s-demo-petclinic/values.yaml)
+                    IMAGE_TAG=$(yq e ".image.version" k8s-demo-petclinic/values.yaml)
 
                     # update staging-values.yaml using yq
                     # add deploy tag
