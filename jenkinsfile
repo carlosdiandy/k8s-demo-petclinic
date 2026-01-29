@@ -17,12 +17,18 @@ pipeline {
     stages {
 
         stage('Build JAR') {
+            when {
+                branch 'dev'
+            }
             steps {
                 sh "mvn clean package -DskipTests"
             }
         }
 
         stage('Push JAR to Nexus') {
+            when {
+                branch 'dev'
+            }
             steps {
                 configFileProvider([configFile(fileId: '80c3f60e-8c3f-446a-b9f9-1137f7835214', variable: 'MAVEN_SETTINGS')]) {
                    sh 'mvn deploy  -Dmaven.test.skip=true --settings $MAVEN_SETTINGS'
@@ -31,6 +37,9 @@ pipeline {
         }
 
         stage('Push SonarReport') {
+            when {
+                branch 'dev'
+            }
             steps {
                 configFileProvider([configFile(fileId: '80c3f60e-8c3f-446a-b9f9-1137f7835214', variable: 'MAVEN_SETTINGS')]) {
                     sh '''
@@ -47,6 +56,9 @@ pipeline {
         }
 
         stage('Build Docker Image') {
+            when {
+                branch 'dev'
+            }
             steps {
                 script {
                     sh '''
@@ -59,6 +71,9 @@ pipeline {
         }
 
         stage('Push Docker image to Nexus') {
+            when {
+                branch 'dev'
+            }
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: "${REGISTRY_CREDENTIALS}", usernameVariable: 'USER', passwordVariable: 'PASS')]) {
@@ -74,7 +89,10 @@ pipeline {
             }
         }
 
-        stage ('Deploy app') {
+        stage ('Deploy dev') {
+            when {
+                branch 'dev'
+            }
             steps {
                 withCredentials([string(credentialsId: 'github', variable: 'GIT_TOKEN')]) {
                     sh '''
@@ -89,9 +107,10 @@ pipeline {
                     git clone https://$GIT_TOKEN@github.com/$GIT_USER/devops.git gitops
                     cd gitops
 
-                    # update values.yaml using yq
+                    # update dev-values.yaml using yq
                     # add deploy tag
                     yq e ".image.version = \\"$IMAGE_TAG\\"" -i k8s-demo-petclinic/values.yaml
+                    yq e ".image.version = \\"$IMAGE_TAG\\"" -i k8s-demo-petclinic/env/dev-values.yaml
 
                     # commit & push changes
                     git config user.email "jenkins@ci.local"
@@ -100,7 +119,44 @@ pipeline {
                         git commit -am "Deploy petclinic image $IMAGE_TAG"
                         git push
                     else
-                            echo "No changes to commit"
+                        echo "No changes to commit"
+                    fi
+                    '''
+                }
+
+            }
+        }
+
+        stage ('Deploy staging') {
+            when {
+                branch 'staging'
+            }
+            steps {
+                withCredentials([string(credentialsId: 'github', variable: 'GIT_TOKEN')]) {
+                    sh '''
+                    #!/bin/bash
+                    set -e
+
+                    # prepare gitops repo
+                    rm -rf gitops
+                    git clone https://$GIT_TOKEN@github.com/$GIT_USER/devops.git gitops
+                    cd gitops
+
+                    # get image tag from values.yaml
+                    IMAGE_TAG=$(yq e ".image.version = \\"$IMAGE_TAG\\"" k8s-demo-petclinic/values.yaml)
+
+                    # update staging-values.yaml using yq
+                    # add deploy tag
+                    yq e ".image.version = \\"$IMAGE_TAG\\"" -i k8s-demo-petclinic/env/staging-values.yaml
+
+                    # commit & push changes
+                    git config user.email "jenkins@ci.local"
+                    git config user.name "jenkins"
+                    if ! git diff --quiet; then
+                        git commit -am "Deploy petclinic staging image $IMAGE_TAG"
+                        git push
+                    else
+                        echo "No changes to commit"
                     fi
                     '''
                 }
@@ -111,10 +167,10 @@ pipeline {
 
     post {
         success {
-            echo "Image ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG} deployee avec succes sur Nexus"
+            echo "SUCCES DU BUILD"
         }
         failure {
-            echo "Build/Push echec !"
+            echo "ECHEC DU BUILD"
         }
     }
 }
